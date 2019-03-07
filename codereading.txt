@@ -1,7 +1,7 @@
 4.1
 1. What happens to a thread when it exits (i.e., callsthread_exit())? What about when it sleeps?
 1.a. When a thread calls thread_exit() it removes itself from memory and the stack
-	and gets turned into a zombie and palced in the zombie array to await exorcism. 
+	and gets turned into a zombie and placed in the zombie array to await exorcism. 
 	When a thread sleeps, it is palced in an array of sleeper addresses to be awoken later.
 
 2.What function(s) handle(s) a context switch?
