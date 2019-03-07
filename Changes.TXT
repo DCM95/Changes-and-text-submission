@@ -1,0 +1,208 @@
+@@ -50,7 +50,8 @@ void              sem_destroy(struct semaphore *);
+ 
+ struct lock {
+ 	char *name;
+-	// add what you need here
++	int held; //boolean to tell whether the lock is being held
++	struct thread *holding; // thread that is currently holding the lock
+ 	// (don't forget to mark things volatile as needed)
+ };
+ 
+diff --git a/kern/include/thread.h b/kern/include/thread.h
+index b051467..7fc93fb 100644
+--- a/kern/include/thread.h
++++ b/kern/include/thread.h
+@@ -91,6 +91,12 @@ void thread_sleep(const void *addr);
+ void thread_wakeup(const void *addr);
+ 
+ /*
++ * Cause one thread sleeping on the specified address to wake up.
++ * Interrupts must be disabled.
++ */
++void thread_wakeone(const void *addr);
++
++/*
+  * Return nonzero if there are any threads sleeping on the specified
+  * address. Meant only for diagnostic purposes.
+  */
+diff --git a/kern/thread/synch.c b/kern/thread/synch.c
+index cdc47a3..f304063 100644
+--- a/kern/thread/synch.c
++++ b/kern/thread/synch.c
+@@ -112,8 +112,9 @@ lock_create(const char *name)
+ 		return NULL;
+ 	}
+ 	
+-	// add stuff here as needed
+-	
++	lock->held = 0; //noone holds the lock at first
++	lock->holding = NULL; //^^	
++
+ 	return lock;
+ }
+ 
+@@ -122,7 +123,7 @@ lock_destroy(struct lock *lock)
+ {
+ 	assert(lock != NULL);
+ 
+-	// add stuff here as needed
++	lock_release(lock); //release the lock so noone holds it anymore.
+ 	
+ 	kfree(lock->name);
+ 	kfree(lock);
+@@ -131,27 +132,43 @@ lock_destroy(struct lock *lock)
+ void
+ lock_acquire(struct lock *lock)
+ {
+-	// Write this
++	
++	assert(lock != NULL); 		//make sure lock is a lock
++	assert(in_interrupt==0); 	//make sure you are not in an interrupt
++	int spl;
++	spl = splhigh(); 		//save priority and set interrupts to off
++	assert(lock_do_i_hold(lock) == 0);//make sure you are not currently in possession of lock
++	while (lock->held) {
++  		thread_sleep(lock); 	//lock things while the lock is held
++	}
++	lock->holding = curthread; 	//assign the lock to the current thread
++	lock->held = 1; 		//say the lock is held
++	splx(spl); 			//reset priority	
+ 
+-	(void)lock;  // suppress warning until code gets written
+ }
+ 
+ void
+ lock_release(struct lock *lock)
+ {
+-	// Write this
+-
+-	(void)lock;  // suppress warning until code gets written
++	assert(lock != NULL);		//make sure lock is a lock
++	assert(lock->held == 1);	//make sure the lock is being held
++	assert(lock_do_i_hold(lock));	//make sure the current thread has the lock
++	int spl;			
++	spl = splhigh();		//save priority and set interrupts to off
++	lock->held = 0;			
++	lock->holding = NULL;		//say that the lock is open for grabs
++	thread_wakeup(lock);		//wake up the lock thread
++	splx(spl);			//reset priority
+ }
+ 
+ int
+ lock_do_i_hold(struct lock *lock)
+ {
+-	// Write this
+-
+-	(void)lock;  // suppress warning until code gets written
++	assert(lock != NULL);		//make sure lock is a lock
+ 
+-	return 1;    // dummy until code gets written
++	if (lock->held == 0) return 0;	//if lock is not held noone is holding lock return 0
++	if (lock->holding == curthread) return 1; // if I hold the lock return 1
++	else return 0;			//if I don't hold the loock but it is held, return 0
+ }
+ 
+ ////////////////////////////////////////////////////////////
+@@ -174,8 +191,7 @@ cv_create(const char *name)
+ 		kfree(cv);
+ 		return NULL;
+ 	}
+-	
+-	// add stuff here as needed
++
+ 	
+ 	return cv;
+ }
+@@ -185,7 +201,7 @@ cv_destroy(struct cv *cv)
+ {
+ 	assert(cv != NULL);
+ 
+-	// add stuff here as needed
++	// I don't think anything needs to be done here.
+ 	
+ 	kfree(cv->name);
+ 	kfree(cv);
+@@ -194,23 +210,28 @@ cv_destroy(struct cv *cv)
+ void
+ cv_wait(struct cv *cv, struct lock *lock)
+ {
+-	// Write this
+-	(void)cv;    // suppress warning until code gets written
+-	(void)lock;  // suppress warning until code gets written
++	lock_release(lock);		//release the lock supplied
++	int spl;			
++	spl = splhigh();		//go into high priority mode
++	thread_sleep(cv);		//sleep the cv thread
++	splx(spl);
++	lock_acquire(lock);		//when you wake up reset priority and reacquire lock
+ }
+ 
+ void
+ cv_signal(struct cv *cv, struct lock *lock)
+ {
+-	// Write this
+-	(void)cv;    // suppress warning until code gets written
+-	(void)lock;  // suppress warning until code gets written
++	int spl 
++	spl = splhigh();
++	thread_wakeone(cv);		//save priority, wake up a single thread in cv then reset priority
++	splx(spl);
+ }
+ 
+ void
+ cv_broadcast(struct cv *cv, struct lock *lock)
+ {
+-	// Write this
+-	(void)cv;    // suppress warning until code gets written
+-	(void)lock;  // suppress warning until code gets written
++	int spl 
++	spl = splhigh();
++	thread_wakeup(cv);		//save priority, wake up all threads in cv then reset priority
++	splx(spl);
+ }
+diff --git a/kern/thread/thread.c b/kern/thread/thread.c
+index d08f473..72d3685 100644
+--- a/kern/thread/thread.c
++++ b/kern/thread/thread.c
+@@ -538,6 +538,41 @@ thread_wakeup(const void *addr)
+ }
+ 
+ /*
++ * Wake up a single thread who is sleeping on "sleep address"
++ * ADDR.
++ */
++void
++thread_wakeone(const void *addr)
++{
++	int i, result;
++	
++	// meant to be called with interrupts off
++	assert(curspl>0);
++	
++	// This is inefficient. Feel free to improve it.
++	
++	for (i=0; i<array_getnum(sleepers); i++) {
++		struct thread *t = array_getguy(sleepers, i);
++		if (t->t_sleepaddr == addr) {
++			
++			// Remove from list
++			array_remove(sleepers, i);
++			
++			// must look at the same sleepers[i] again
++			i--;
++
++			/*
++			 * Because we preallocate during thread_fork,
++			 * this should never fail.
++			 */
++			result = make_runnable(t);
++			assert(result==0);
++			break;		//causes thread to exit after 1st thread it wakes
++		}
++	}
++}
++
++/*
+  * Return nonzero if there are any threads who are sleeping on "sleep address"
+  * ADDR. This is meant to be used only for diagnostic purposes.
+  */

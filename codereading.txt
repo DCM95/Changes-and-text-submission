@@ -1,0 +1,46 @@
+4.1
+1. What happens to a thread when it exits (i.e., callsthread_exit())? What about when it sleeps?
+1.a. When a thread calls thread_exit() it removes itself from memory and the stack
+	and gets turned into a zombie and palced in the zombie array to await exorcism. 
+	When a thread sleeps, it is palced in an array of sleeper addresses to be awoken later.
+
+2.What function(s) handle(s) a context switch?
+2.a. mi_switch is the function that handles context switches.
+
+3.How many thread states are there? What are they?
+3.a. 4 thread states. run, ready, sleep, and zombie
+
+4.What does it mean to turn interrupts off? How is this accomplished? Why is it important to turn off 
+	interrupts in the thread subsystem code?
+4.a.Turning intercepts off means to make it so that the running code cannot be interrupted by 
+	anything so that any changes in running threads or the stopping of threads does not mess up and 
+	create problems in the stack or create recursive loops or generally mess up the system.
+	It is accomplished by calling splhigh() to set priority level to high and avoid interrupts.
+5.What happens when a thread wakes up another thread? How does a sleeping thread get to run again?
+5.a. it searches through the sleeping thread list for the address of the thread it intends to wake
+	then sets it's state to runnable and then the sleeping thread deletes it's sleep address from
+	the sleep array memory.
+
+4.2
+6. What function is responsible for choosing the next thread to run?
+6.a. Scheduler returns the next thread to be run
+
+7.How does that function pick the next thread?
+7.a it just returns the next item in the queue
+
+8.What role does the hardware timer play in scheduling? What hardware independent function is called 
+	on a timer interrupt?
+8.a. The hardware timer wakes up the thread at the address lbolt. hardclock(void) is 
+	called HZ times per second on a timer interrupt.
+
+4.3
+9.Describe how thread_sleep() and thread_wakeup() are used to implement semaphores. What is the 
+	purpose of the argument passed to thread_sleep()?
+9.a. Semaphores wake up and sleep depending on the counts they possess, 
+	so as they get more count added they wake up, and when they hit 0 they sleep.
+	the value passed to sleep is the address of the semaphore so that it can be woke up by V(*sem)
+
+10.Why does the lock API in OS/161 provide lock_do_i_hold(), but not lock_get_holder()?
+10.a. Because it's not necessary to know who holds a lock but it is necessary to know 
+	if you hold a lock so that you can assert that you have it and not release a lock you don't hold.
+	
