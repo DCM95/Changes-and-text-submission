@@ -142,11 +142,17 @@ lock_acquire(struct lock *lock)
 	int spl;
 	spl = splhigh(); 		//save priority and set interrupts to off
 	assert(lock_do_i_hold(lock) == 0);//make sure you are not currently in possession of lock
-	while (lock->held) {
- 		thread_sleep(lock); 	//lock things while the lock is held
+	while (1) {
+		if(lock->holding == NULL){
+			lock->holding = curthread; 	//assign the lock to the current thread
+			lock->held = 1; 		//say the lock is held
+			splx(spl); 			//reset priority	
+			return;
+		}
+		else{
+			thread_sleep(lock); 	//lock things while the lock is held
+		}
 	}
-	lock->holding = curthread; 	//assign the lock to the current thread
-	lock->held = 1; 		//say the lock is held
 	splx(spl); 			//reset priority	
 
 }
@@ -154,14 +160,15 @@ lock_acquire(struct lock *lock)
 void
 lock_release(struct lock *lock)
 {
+	int spl;
 	assert(lock != NULL);		//make sure lock is a lock
-	assert(lock->held == 1);	//make sure the lock is being held
-	assert(lock_do_i_hold(lock) == 1);	//make sure the current thread has the lock
-	int spl;			
-	spl = splhigh();		//save priority and set interrupts to off
-	lock->held = 0;			
-	lock->holding = NULL;		//say that the lock is open for grabs
-	thread_wakeup(lock);		//wake up the lock thread
+	assert(lock_do_i_hold(lock) == 1);	//make sure the current thread has the lock			
+	spl = splhigh();
+	if(lock_do_i_hold(lock)){		//save priority and set interrupts to off
+		lock->held = 0;			
+		lock->holding = NULL;		//say that the lock is open for grabs
+		thread_wakeup(lock);		//wake up the lock thread
+	}
 	splx(spl);			//reset priority
 
 }
@@ -172,7 +179,7 @@ lock_do_i_hold(struct lock *lock)
 	assert(lock != NULL);		//make sure lock is a lock
 	if (lock->held == 0) return 0;	//if lock is not held noone is holding lock return 0
 	if (lock->holding == curthread) return 1; // if I hold the lock return 1
-	else return 0;			//if I don't hold the lock but it is held, return 0
+	return 0;			//if I don't hold the lock but it is held, return 0
 
 }
 
@@ -222,24 +229,31 @@ cv_wait(struct cv *cv, struct lock *lock)
 	thread_sleep(cv);		//sleep the cv thread
 	lock_acquire(lock);		//when you wake up reset priority and reacquire lock
 	splx(spl);	
-
+	(void)cv;
+	(void)lock;
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-	int spl 
+	int spl; 
 	spl = splhigh();
 	thread_wakeone(cv);		//save priority, wake up a single thread in cv then reset priority
 	splx(spl);
+	(void)cv;
+	(void)lock;
+
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	int spl 
+	int spl; 
 	spl = splhigh();
 	thread_wakeup(cv);		//save priority, wake up all threads in cv then reset priority
 	splx(spl);
+	(void)cv;
+	(void)lock;
+
 	
 }
